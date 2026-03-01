@@ -13,7 +13,6 @@ offline-ai-os/
 ├── .env.example                      # Environment variable template
 │
 ├── agent/                            # 🧑‍💻 Student 1: Brain & Hands
-│   ├── README_S1.md
 │   ├── llm_config.py                 # Ollama model config & connection
 │   ├── agent_controller.py           # Open Interpreter setup + local mode
 │   ├── tool_manager.py               # Wrapper for all callable tools
@@ -24,7 +23,6 @@ offline-ai-os/
 │       └── python_runner.py          # safe subprocess executor
 │
 ├── student2_memory/                  # 💽 Student 2: Memory & AMD Layer
-│   ├── README_S2.md
 │   ├── onnx_embedder.py              # ONNX Runtime embedding inference
 │   ├── chroma_store.py               # ChromaDB init, insert, query
 │   ├── document_ingester.py          # PDF/TXT chunking + indexing pipeline
