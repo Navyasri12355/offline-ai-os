@@ -1,0 +1,12 @@
+ollama
+open-interpreter
+litellm
+chromadb
+onnxruntime
+optimum[exporters]
+sentence-transformers
+fastapi
+uvicorn
+python-pptx
+pypdf2
+pydantic
