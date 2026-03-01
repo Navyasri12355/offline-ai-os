@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Offline AI OS • AMD Ryzen AI</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<style>
+body {
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    color: #e6f1ff;
+    font-family: 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+.header-bar {
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(10px);
+    padding: 10px 20px;
+    border-bottom: 1px solid rgba(0,255,255,0.2);
+}
+
+.status-badge {
+    margin-right: 15px;
+    font-size: 0.9rem;
+}
+
+.main-container {
+    min-height: calc(100vh - 120px);
+}
+
+.chat-panel {
+    background: rgba(0,0,0,0.5);
+    border-radius: 15px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    height: 75vh;
+    box-shadow: 0 0 20px rgba(0,255,255,0.1);
+}
+
+.chat-history {
+    flex-grow: 1;
+    overflow-y: auto;
+    margin-bottom: 10px;
+}
+
+.message {
+    padding: 10px 15px;
+    border-radius: 15px;
+    margin-bottom: 10px;
+    max-width: 70%;
+}
+
+.user-message {
+    background: #0dcaf0;
+    color: #000;
+    margin-left: auto;
+}
+
+.ai-message {
+    background: #212529;
+    border: 1px solid #0dcaf0;
+}
+
+.input-area {
+    display: flex;
+}
+
+@media (max-width: 768px) {
+    .chat-panel {
+        height: auto;
+    }
+
+    .execution-panel {
+        margin-top: 20px;
+        height: 300px;
+    }
+}
+.execution-panel {
+    background: #000;
+    border-radius: 15px;
+    padding: 15px;
+    height: 100%;
+    overflow-y: auto;
+    font-family: monospace;
+    color: #00ff88;
+    box-shadow: 0 0 20px rgba(0,255,0,0.2);
+}
+
+.cpu-meter {
+    height: 8px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 5px;
+    overflow: hidden;
+    margin-top: 5px;
+}
+
+.cpu-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #00ffcc, #00ff88);
+    transition: width 0.5s ease;
+}
+
+.footer {
+    text-align: center;
+    font-size: 0.8rem;
+    padding: 5px;
+    background: rgba(0,0,0,0.3);
+    border-top: 1px solid rgba(0,255,255,0.2);
+}
+</style>
+</head>
+
+<body>
+
+<div class="header-bar d-flex justify-content-between align-items-center">
+    <div>
+        <strong>Offline AI Operating System</strong>
+        <small class="text-info ms-2">Privacy-first • Cloud-free • Hardware-accelerated</small>
+    </div>
+    <div>
+        <span class="badge bg-success status-badge" id="systemStatus">System: Connected</span>
+        <span class="badge bg-primary status-badge" id="docCount">Docs Indexed: 0</span>
+        <span class="badge bg-warning text-dark status-badge" id="inferenceTime">Inference: -- ms</span>
+        <span class="badge bg-info text-dark status-badge">ONNX Runtime Active</span>
+        <div class="cpu-meter">
+            <div class="cpu-fill" id="cpuFill"></div>
+        </div>
+        <small>AMD Ryzen CPU Utilization (ONNX Runtime)</small>
+    </div>
+</div>
+
+<div class="container-fluid main-container mt-3">
+    <div class="row h-100">
+        <div class="col-md-8">
+            <div class="chat-panel">
+                <div class="chat-history" id="chatHistory"></div>
+                <div id="fileBanner"></div>
+                <div class="input-area">
+                    <input type="text" id="userInput" class="form-control me-2" placeholder="Enter command...">
+                    <button class="btn btn-info" id="sendBtn">Send</button>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="execution-panel" id="executionLog">
+                <strong>Execution Log</strong>
+                <hr>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="footer">
+    100% Offline • Powered by ONNX Runtime • Optimized for AMD Ryzen
+</div>
+
+<script>
+const chatHistory = document.getElementById("chatHistory");
+const executionLog = document.getElementById("executionLog");
+const sendBtn = document.getElementById("sendBtn");
+const userInput = document.getElementById("userInput");
+const docCount = document.getElementById("docCount");
+const systemStatus = document.getElementById("systemStatus");
+const inferenceTime = document.getElementById("inferenceTime");
+const cpuFill = document.getElementById("cpuFill");
+const fileBanner = document.getElementById("fileBanner");
+
+async function checkHealth() {
+    try {
+        const res = await fetch("/health");
+        const data = await res.json();
+        systemStatus.textContent = "System: Connected";
+        systemStatus.classList.remove("bg-danger");
+        systemStatus.classList.add("bg-success");
+    } catch {
+        systemStatus.textContent = "System: Offline";
+        systemStatus.classList.remove("bg-success");
+        systemStatus.classList.add("bg-danger");
+    }
+}
+
+async function updateMemoryStatus() {
+    try {
+        const res = await fetch("/memory_status");
+        const data = await res.json();
+        docCount.textContent = "Docs Indexed: " + data.documents_indexed;
+    } catch {}
+}
+
+function appendMessage(text, type) {
+    const div = document.createElement("div");
+    div.className = "message " + (type === "user" ? "user-message" : "ai-message");
+    div.innerText = text;
+    chatHistory.appendChild(div);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+function updateCPU(time) {
+    inferenceTime.textContent = "Inference: " + time + " ms";
+    let percent = Math.min(time, 100);
+    cpuFill.style.width = percent + "%";
+}
+
+function showFileBanner() {
+    fileBanner.innerHTML = `
+        <div class="alert alert-success mt-2">
+            File Generated Successfully 
+            <button class="btn btn-sm btn-dark ms-3">Download Presentation</button>
+        </div>`;
+}
+
+async function sendMessage() {
+    const message = userInput.value.trim();
+    if (!message) return;
+
+    appendMessage(message, "user");
+    userInput.value = "";
+    sendBtn.disabled = true;
+
+    try {
+        const res = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message })
+        });
+
+        const data = await res.json();
+
+        appendMessage(data.response, "ai");
+        executionLog.innerHTML += "<br>" + data.execution_log.replace(/\n/g, "<br>");
+        executionLog.scrollTop = executionLog.scrollHeight;
+
+        updateCPU(data.inference_time_ms);
+
+        if (data.execution_log.includes(".pptx") || data.execution_log.includes("File saved")) {
+            showFileBanner();
+        }
+
+    } catch {
+        appendMessage("Error connecting to backend.", "ai");
+    }
+
+    sendBtn.disabled = false;
+}
+
+sendBtn.addEventListener("click", sendMessage);
+userInput.addEventListener("keypress", function(e) {
+    if (e.key === "Enter") sendMessage();
+});
+
+setInterval(updateMemoryStatus, 5000);
+checkHealth();
+updateMemoryStatus();
+</script>
+
+</body>
+</html>
