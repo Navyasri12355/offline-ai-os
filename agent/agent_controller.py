@@ -174,11 +174,13 @@ def _handle_summarize_and_ppt(message: str, memory_context: str) -> dict:
 
     # 2. Read each file
     combined_text = ""
+    max_chars_per_file = 1500 // max(len(files), 1)
     for fpath in files:
         r = read_file(fpath)
-        if r["success"]:
-            combined_text += f"\n\n--- {os.path.basename(fpath)} ---\n{r['content']}"
-            _log(f"Read: {os.path.basename(fpath)}")
+        if r["success"] and r["content"]:
+            snippet = r["content"][:max_chars_per_file]
+            combined_text += f"\n\n--- {os.path.basename(fpath)} ---\n{snippet}"
+            _log(f"Read: {os.path.basename(fpath)} ({len(snippet)} chars)")
 
     if not combined_text and memory_context:
         combined_text = memory_context
@@ -198,7 +200,7 @@ def _handle_summarize_and_ppt(message: str, memory_context: str) -> dict:
     summary_prompt = f"""You are summarizing research documents for a presentation.
 
 Documents:
-{combined_text[:1500]}
+{combined_text[:3000]}
 
 Generate an outline for a 4-slide presentation with this exact format:
 Title: <presentation title>
