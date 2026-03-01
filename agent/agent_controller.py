@@ -2,7 +2,7 @@
 agent_controller.py — Core agent logic using direct Ollama API calls.
 Student 1 owns this file.
 
-This is the main entry point called by server.py at:
+Entry point called by server.py:
     POST /chat  →  run_agent(message) -> AgentResponse
 
 Returns:
@@ -28,7 +28,6 @@ from agent.tools.folder_tools import organize_folder, list_pdfs, get_folder_summ
 from agent.tools.pptx_generator import generate_ppt
 from agent.tools.python_runner import run_script
 
-# Execution log — appended during agent run, returned in response
 _execution_logs: list[str] = []
 
 
@@ -53,9 +52,6 @@ Rules:
 
 
 def _call_ollama(prompt: str) -> tuple[str, float]:
-    """
-    Send a prompt to Ollama and return (response_text, elapsed_seconds).
-    """
     start = time.time()
     response = requests.post(
         f"{OLLAMA_BASE_URL}/api/generate",
@@ -74,10 +70,7 @@ def _call_ollama(prompt: str) -> tuple[str, float]:
 
 
 def _load_sample_docs() -> str:
-    """
-    Read all files from demo/sample_docs and return combined text.
-    Used whenever user references 'my research', 'my paper', 'my documents' etc.
-    """
+    """Read all files from demo/sample_docs and return combined text."""
     demo_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "demo", "sample_docs")
     )
@@ -92,22 +85,15 @@ def _load_sample_docs() -> str:
 
 
 def _references_local_docs(message: str) -> bool:
-    """Return True if the message refers to the user's own documents."""
     triggers = [
         "my research", "my paper", "my document", "my file",
         "my folder", "my docs", "my pdf", "the paper", "the document",
         "the research", "from my", "about my", "based on my"
     ]
-    msg = message.lower()
-    return any(t in msg for t in triggers)
+    return any(t in message.lower() for t in triggers)
 
 
 def _detect_intent(message: str) -> str:
-    """
-    Detect what the user wants to do based on keywords.
-    Returns one of: "ppt", "summarize_and_ppt", "organize", "list", "read",
-                    "create_file", "run_script", "chat"
-    """
     msg = message.lower()
     words = set(re.findall(r'\b\w+\b', msg))
 
@@ -117,64 +103,156 @@ def _detect_intent(message: str) -> str:
     def has_any_word(*kws):
         return any(k in words for k in kws)
 
-    # ── PPT / Presentation ────────────────────────────────────────────────
     if has_any("presentation", "powerpoint") or has_any_word("ppt", "slides", "slide"):
         if has_any("summarize", "summary", "research folder", "my folder",
                    "my documents", "my files", "from folder", "from docs"):
             return "summarize_and_ppt"
         return "ppt"
 
-    # ── Summarize + PPT (without explicit PPT mention) ────────────────────
     if has_any_word("summarize", "summarise") and has_any(
         "folder", "documents", "docs", "research", "files"
     ):
         return "summarize_and_ppt"
 
-    # ── Organize folder ───────────────────────────────────────────────────
     if has_any_word("organize", "organise", "sort", "arrange", "tidy"):
         return "organize"
 
-    # ── List files ────────────────────────────────────────────────────────
     if has_any("what files", "show files", "list files", "list all files",
                "what's in", "what is in", "show me the files"):
         return "list"
     if has_any_word("list") and has_any_word("files", "folder", "directory", "docs"):
         return "list"
 
-    # ── Read file ─────────────────────────────────────────────────────────
     if has_any("read the file", "open the file", "show me the file",
                "contents of", "what does", "what's in the file"):
         return "read"
 
-    # ── Create / write file ───────────────────────────────────────────────
     if has_any_word("create", "make", "write", "generate", "save") and \
        has_any_word("file", "txt", "document", "doc"):
         return "create_file"
 
-    # ── Run script ────────────────────────────────────────────────────────
     if has_any("run script", "execute script", "run python", "run the script"):
         return "run_script"
 
-    # ── Default: plain chat ───────────────────────────────────────────────
     return "chat"
 
 
-def _handle_summarize_and_ppt(message: str, memory_context: str) -> dict:
-    """Read demo docs, summarize via Ollama, generate a PPT."""
+def _parse_slide_outline(text: str) -> list[dict]:
+    """Parse LLM outline into slides. Pads slides with fewer than 4 bullets."""
+    slides = []
+    current_heading = None
 
-    # 1. Find documents
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if "Heading:" in line:
+            current_heading = line.split("Heading:", 1)[-1].strip()
+        elif "Bullets:" in line and current_heading:
+            raw = line.split("Bullets:", 1)[-1].strip()
+            bullets = [b.strip() for b in raw.split("|") if b.strip()]
+            bullets = [b for b in bullets if len(b) > 5]
+
+            # Pad to at least 4 if Ollama returned fewer
+            while len(bullets) < 4:
+                bullets.append("Refer to source document for additional details.")
+
+            slides.append({"heading": current_heading, "bullets": bullets})
+            current_heading = None
+
+    if not slides:
+        chunks = [text[i:i+150].strip() for i in range(0, min(len(text), 900), 150)]
+        slides = [{"heading": "Summary", "bullets": [c for c in chunks if c]}]
+
+    return slides
+
+
+def _extract_title(text: str) -> str | None:
+    for line in text.split("\n"):
+        if line.strip().startswith("Title:"):
+            return line.split("Title:", 1)[-1].strip()
+    return None
+
+
+def _build_prompt(combined_text: str, files: list[str]) -> str:
+    """
+    Build a fully dynamic prompt that scales to any number of source documents.
+    - 1 doc  → 3 slides
+    - 2 docs → 5 slides (2 per doc + 1 conclusion)
+    - 3 docs → 7 slides (2 per doc + 1 conclusion)
+    - N docs → (N*2 + 1) slides
+    """
+    doc_names = [os.path.basename(f) for f in files]
+    slides_per_doc = 2
+    total_content_slides = len(files) * slides_per_doc
+    conclusion_slide = total_content_slides + 1
+
+    # Build slide template
+    slide_template = "\n".join(
+        f"Slide {i} Heading: <heading>\n"
+        f"Slide {i} Bullets: <bullet> | <bullet> | <bullet> | <bullet> | <bullet> | <bullet> | <bullet> | <bullet>"
+        for i in range(1, conclusion_slide + 1)
+    )
+
+    # Build per-doc allocation instructions
+    if len(files) == 1:
+        doc_allocation = (
+            f"- All slides 1-{total_content_slides} must cover content from: '{doc_names[0]}'\n"
+            f"- Slide {conclusion_slide}: key takeaways and conclusions from the document"
+        )
+    else:
+        allocation_lines = []
+        slide_num = 1
+        for i, name in enumerate(doc_names):
+            end = slide_num + slides_per_doc - 1
+            allocation_lines.append(
+                f"- Slides {slide_num}-{end}: cover content specifically from '{name}'"
+            )
+            slide_num = end + 1
+        allocation_lines.append(
+            f"- Slide {conclusion_slide}: conclusions and comparisons drawn from ALL documents"
+        )
+        doc_allocation = "\n".join(allocation_lines)
+
+    return f"""You are creating a detailed presentation from the following documents.
+
+Documents:
+{combined_text[:4000]}
+
+IMPORTANT: Cover content from ALL documents above. Read them carefully before writing.
+
+Output ONLY in this exact format — no extra text, no preamble, no explanations:
+
+Title: <title based on all documents>
+{slide_template}
+
+STRICT RULES — failure to follow these will make the presentation useless:
+- EVERY slide MUST have EXACTLY 8 bullets separated by the | character
+- Count your bullets before outputting — if you have fewer than 8, add more facts from the document
+- Each bullet MUST be a specific fact, finding, method, number, or result taken directly from the documents
+- Each bullet should be 10-20 words — a full informative sentence, not a label or heading
+- FORBIDDEN phrases: "refer to document", "see source", "novel concept", "performance achieved", "various methods" — these are too vague
+- If a slide topic has fewer than 8 obvious points, expand on related context, implications, or supporting details from the documents
+- Separate bullets with | only — never use newlines or commas between bullets
+{doc_allocation}
+- Do not repeat the same point across different slides
+- Output ONLY the Title and Slide lines in the exact format shown above, nothing else"""
+
+
+def _handle_summarize_and_ppt(message: str, memory_context: str) -> dict:
+    """Single-pass generation. Scales to any number of source documents."""
+
+    # 1. Find and read documents
     demo_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "demo", "sample_docs")
     )
     _log(f"Scanning folder: {demo_dir}")
-
     result = list_files(demo_dir)
     files = result.get("files", [])
     _log(f"Found {len(files)} files.")
 
-    # 2. Read each file
     combined_text = ""
-    max_chars_per_file = 1500 // max(len(files), 1)
+    max_chars_per_file = 4000 // max(len(files), 1)
     for fpath in files:
         r = read_file(fpath)
         if r["success"] and r["content"]:
@@ -187,7 +265,6 @@ def _handle_summarize_and_ppt(message: str, memory_context: str) -> dict:
         _log("Using memory context as document source.")
 
     if not combined_text:
-        _log("No documents found to summarize.")
         return {
             "reply": "No documents found in the demo/sample_docs folder.",
             "logs": list(_execution_logs),
@@ -195,35 +272,18 @@ def _handle_summarize_and_ppt(message: str, memory_context: str) -> dict:
             "file_path": None,
         }
 
-    # 3. Ask Ollama to summarize + generate slide content
-    _log("Sending documents to Ollama for summarization...")
-    summary_prompt = f"""You are summarizing research documents for a presentation.
-
-Documents:
-{combined_text[:3000]}
-
-Generate an outline for a 4-slide presentation with this exact format:
-Title: <presentation title>
-Slide 1 Heading: <heading>
-Slide 1 Bullets: <bullet1> | <bullet2> | <bullet3>
-Slide 2 Heading: <heading>
-Slide 2 Bullets: <bullet1> | <bullet2> | <bullet3>
-Slide 3 Heading: <heading>
-Slide 3 Bullets: <bullet1> | <bullet2> | <bullet3>
-Slide 4 Heading: <heading>
-Slide 4 Bullets: <bullet1> | <bullet2> | <bullet3>
-
-Be concise. Each bullet should be one short sentence. Output only the outline, nothing else."""
-
-    llm_output, elapsed = _call_ollama(summary_prompt)
+    # 2. Build dynamic prompt and call Ollama
+    prompt = _build_prompt(combined_text, files)
+    _log(f"Generating presentation for {len(files)} document(s)...")
+    llm_output, elapsed = _call_ollama(prompt)
     _log(f"Ollama responded in {elapsed}s")
 
-    # 4. Parse LLM output into slides
     slides = _parse_slide_outline(llm_output)
-    title = _extract_title(llm_output) or "Research Summary"
-    _log(f"Parsed {len(slides)} slides.")
+    title = _extract_title(llm_output) or "Document Summary"
+    total_bullets = sum(len(s["bullets"]) for s in slides)
+    _log(f"Built {len(slides)} slides with {total_bullets} total bullets.")
 
-    # 5. Generate the PPT
+    # 3. Generate PPT
     _log("Generating presentation...")
     ppt_result = generate_ppt(
         title=title,
@@ -234,70 +294,21 @@ Be concise. Each bullet should be one short sentence. Output only the outline, n
     if ppt_result["success"]:
         _log(f"PPT saved: {ppt_result['path']}")
         return {
-            "reply": f"Done! Summarized {len(files)} document(s) and created a {len(slides)}-slide presentation.",
+            "reply": f"Done! Created a {len(slides)}-slide presentation with {total_bullets} key points across {len(files)} document(s).",
             "logs": list(_execution_logs),
             "file_ready": True,
             "file_path": ppt_result["path"],
         }
     else:
-        _log(f"PPT generation failed: {ppt_result['message']}")
         return {
-            "reply": f"Summarization complete but PPT generation failed: {ppt_result['message']}",
+            "reply": f"Summarization complete but PPT failed: {ppt_result['message']}",
             "logs": list(_execution_logs),
             "file_ready": False,
             "file_path": None,
         }
 
 
-def _parse_slide_outline(text: str) -> list[dict]:
-    """Parse the LLM's slide outline into a list of slide dicts."""
-    slides = []
-    lines = text.split("\n")
-
-    current_heading = None
-    for line in lines:
-        line = line.strip()
-        if "Heading:" in line:
-            current_heading = line.split("Heading:")[-1].strip()
-        elif "Bullets:" in line and current_heading:
-            raw_bullets = line.split("Bullets:")[-1].strip()
-            bullets = [b.strip() for b in raw_bullets.split("|") if b.strip()]
-            if not bullets:
-                bullets = [raw_bullets]
-            slides.append({"heading": current_heading, "bullets": bullets})
-            current_heading = None
-
-    # Fallback if parsing fails
-    if not slides:
-        slides = [{"heading": "Summary", "bullets": [text[:200]]}]
-
-    return slides
-
-
-def _extract_title(text: str) -> str | None:
-    """Extract the title line from LLM output."""
-    for line in text.split("\n"):
-        if line.strip().startswith("Title:"):
-            return line.split("Title:")[-1].strip()
-    return None
-
-
 def run_agent(message: str, memory_context: str = "") -> dict:
-    """
-    Main agent entry point.
-
-    Args:
-        message:        The user's input message.
-        memory_context: Optional RAG context from Student 2's memory_api.
-
-    Returns:
-        {
-            "reply":      str,
-            "logs":       list[str],
-            "file_ready": bool,
-            "file_path":  str | None,
-        }
-    """
     global _execution_logs
     _execution_logs = []
 
@@ -313,22 +324,25 @@ def run_agent(message: str, memory_context: str = "") -> dict:
         intent = _detect_intent(message)
         _log(f"Intent detected: {intent}")
 
-        # ── Summarize documents + generate PPT (main demo flow) ───────────
+        # ── Summarize docs + generate PPT ─────────────────────────────────
         if intent == "summarize_and_ppt":
             return _handle_summarize_and_ppt(message, memory_context)
 
-        # ── Generate PPT from direct request ──────────────────────────────
+        # ── PPT from direct request ────────────────────────────────────────
         if intent == "ppt":
             _log("Generating presentation from user request...")
-            # If user references their docs, load them as context
             doc_context = _load_sample_docs() if _references_local_docs(message) else ""
-            prompt = f"Context from documents:\n{doc_context[:1500]}\n\nRequest: {message}" \
-                     if doc_context else message
+            prompt = (
+                f"Context from documents:\n{doc_context[:1500]}\n\nRequest: {message}"
+                if doc_context else message
+            )
             reply, elapsed = _call_ollama(prompt)
             _log(f"Ollama responded in {elapsed}s")
             ppt_result = generate_ppt(
                 title="AI Generated Presentation",
-                slides=[{"heading": "Key Points", "bullets": reply.split(". ")[:5]}],
+                slides=[{"heading": "Key Points",
+                         "bullets": [b.strip() for b in reply.split(".")
+                                     if len(b.strip()) > 5][:8]}],
             )
             file_path = ppt_result["path"] if ppt_result["success"] else None
             if file_path:
@@ -374,14 +388,12 @@ def run_agent(message: str, memory_context: str = "") -> dict:
 
         # ── Create file ────────────────────────────────────────────────────
         if intent == "create_file":
-            # Extract filename
             words = message.split()
             fname = next(
                 (w.strip('"\',') for w in words if "." in w and not w.startswith("http")),
                 "output.txt"
             )
 
-            # 1. Try to extract inline content from the message first
             content = ""
             for marker in ["with the content", "with content", "containing",
                            "saying", "with text", "that says"]:
@@ -392,13 +404,11 @@ def run_agent(message: str, memory_context: str = "") -> dict:
             if content:
                 _log("Content extracted from message — skipping Ollama.")
             else:
-                # 2. Check if user is referring to their local documents
                 doc_context = ""
                 if _references_local_docs(message):
                     _log("User referenced local documents — loading sample_docs...")
                     doc_context = _load_sample_docs()
 
-                # 3. Call Ollama with or without document context
                 if doc_context:
                     _log("Asking Ollama with document context...")
                     content_prompt = (
@@ -456,9 +466,8 @@ def run_agent(message: str, memory_context: str = "") -> dict:
                 "file_path": None,
             }
 
-        # ── Default: plain chat with Ollama ────────────────────────────────
+        # ── Default: plain chat ────────────────────────────────────────────
         _log(f"Sending to Ollama: {message[:80]}...")
-        # Inject document context if user references their files
         if _references_local_docs(message):
             _log("Loading local docs for chat context...")
             doc_context = _load_sample_docs()
@@ -497,15 +506,3 @@ def run_agent(message: str, memory_context: str = "") -> dict:
             "file_ready": False,
             "file_path": None,
         }
-
-
-# ── CLI test harness ───────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    test_msg = input("Enter a command to test the agent:\n> ").strip()
-    result = run_agent(test_msg)
-    print("\n── Agent Response ──")
-    print(f"Reply:      {result['reply']}")
-    print(f"File ready: {result['file_ready']} → {result['file_path']}")
-    print("Logs:")
-    for log in result["logs"]:
-        print(f"  {log}")
