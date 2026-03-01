@@ -65,12 +65,41 @@ def _call_ollama(prompt: str) -> tuple[str, float]:
             "system": SYSTEM_PROMPT,
             "stream": False,
         },
-        timeout=120,
+        timeout=300,
     )
     response.raise_for_status()
     text = response.json().get("response", "").strip()
     elapsed = round(time.time() - start, 2)
     return text, elapsed
+
+
+def _load_sample_docs() -> str:
+    """
+    Read all files from demo/sample_docs and return combined text.
+    Used whenever user references 'my research', 'my paper', 'my documents' etc.
+    """
+    demo_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "demo", "sample_docs")
+    )
+    file_list = list_files(demo_dir)
+    combined = ""
+    for fpath in file_list.get("files", []):
+        r = read_file(fpath)
+        if r["success"] and r["content"]:
+            combined += f"\n\n--- {os.path.basename(fpath)} ---\n{r['content']}"
+            _log(f"Loaded: {os.path.basename(fpath)}")
+    return combined.strip()
+
+
+def _references_local_docs(message: str) -> bool:
+    """Return True if the message refers to the user's own documents."""
+    triggers = [
+        "my research", "my paper", "my document", "my file",
+        "my folder", "my docs", "my pdf", "the paper", "the document",
+        "the research", "from my", "about my", "based on my"
+    ]
+    msg = message.lower()
+    return any(t in msg for t in triggers)
 
 
 def _detect_intent(message: str) -> str:
@@ -118,8 +147,6 @@ def _detect_intent(message: str) -> str:
         return "read"
 
     # ── Create / write file ───────────────────────────────────────────────
-    # Catches: "create a file", "make a file", "write a file",
-    #          "generate a file", "save a file", "create file called" etc.
     if has_any_word("create", "make", "write", "generate", "save") and \
        has_any_word("file", "txt", "document", "doc"):
         return "create_file"
@@ -171,7 +198,7 @@ def _handle_summarize_and_ppt(message: str, memory_context: str) -> dict:
     summary_prompt = f"""You are summarizing research documents for a presentation.
 
 Documents:
-{combined_text[:3000]}
+{combined_text[:1500]}
 
 Generate an outline for a 4-slide presentation with this exact format:
 Title: <presentation title>
@@ -291,7 +318,11 @@ def run_agent(message: str, memory_context: str = "") -> dict:
         # ── Generate PPT from direct request ──────────────────────────────
         if intent == "ppt":
             _log("Generating presentation from user request...")
-            reply, elapsed = _call_ollama(message)
+            # If user references their docs, load them as context
+            doc_context = _load_sample_docs() if _references_local_docs(message) else ""
+            prompt = f"Context from documents:\n{doc_context[:1500]}\n\nRequest: {message}" \
+                     if doc_context else message
+            reply, elapsed = _call_ollama(prompt)
             _log(f"Ollama responded in {elapsed}s")
             ppt_result = generate_ppt(
                 title="AI Generated Presentation",
@@ -341,14 +372,14 @@ def run_agent(message: str, memory_context: str = "") -> dict:
 
         # ── Create file ────────────────────────────────────────────────────
         if intent == "create_file":
-            # Extract filename — find the first word containing a dot
+            # Extract filename
             words = message.split()
             fname = next(
                 (w.strip('"\',') for w in words if "." in w and not w.startswith("http")),
                 "output.txt"
             )
 
-            # Try to extract content directly from the message first
+            # 1. Try to extract inline content from the message first
             content = ""
             for marker in ["with the content", "with content", "containing",
                            "saying", "with text", "that says"]:
@@ -359,15 +390,34 @@ def run_agent(message: str, memory_context: str = "") -> dict:
             if content:
                 _log("Content extracted from message — skipping Ollama.")
             else:
-                # Only call Ollama if no content found in the message
-                _log("No inline content found — asking Ollama...")
-                content_prompt = (
-                    f"Write the contents for a file called {fname}.\n"
-                    f"Request: {message}\n\n"
-                    f"Respond with ONLY the raw file text. "
-                    f"No explanations, no steps, no markdown, no code blocks. "
-                    f"Just the plain text that should go inside the file."
-                )
+                # 2. Check if user is referring to their local documents
+                doc_context = ""
+                if _references_local_docs(message):
+                    _log("User referenced local documents — loading sample_docs...")
+                    doc_context = _load_sample_docs()
+
+                # 3. Call Ollama with or without document context
+                if doc_context:
+                    _log("Asking Ollama with document context...")
+                    content_prompt = (
+                        f"Using only the following document as context:\n\n"
+                        f"{doc_context[:2000]}\n\n"
+                        f"Write the contents for a file called '{fname}'.\n"
+                        f"Request: {message}\n\n"
+                        f"Respond with ONLY the raw file text. "
+                        f"No explanations, no steps, no markdown, no code blocks. "
+                        f"Just the plain text that should go inside the file."
+                    )
+                else:
+                    _log("Asking Ollama...")
+                    content_prompt = (
+                        f"Write the contents for a file called '{fname}'.\n"
+                        f"Request: {message}\n\n"
+                        f"Respond with ONLY the raw file text. "
+                        f"No explanations, no steps, no markdown, no code blocks. "
+                        f"Just the plain text that should go inside the file."
+                    )
+
                 content, elapsed = _call_ollama(content_prompt)
                 _log(f"Ollama responded in {elapsed}s")
 
@@ -406,7 +456,19 @@ def run_agent(message: str, memory_context: str = "") -> dict:
 
         # ── Default: plain chat with Ollama ────────────────────────────────
         _log(f"Sending to Ollama: {message[:80]}...")
-        prompt = f"[Context]\n{memory_context}\n\n[User]\n{message}" if memory_context else message
+        # Inject document context if user references their files
+        if _references_local_docs(message):
+            _log("Loading local docs for chat context...")
+            doc_context = _load_sample_docs()
+            prompt = (
+                f"Context from the user's local documents:\n{doc_context[:2000]}\n\n"
+                f"User: {message}"
+            )
+        elif memory_context:
+            prompt = f"[Context]\n{memory_context}\n\n[User]\n{message}"
+        else:
+            prompt = message
+
         reply, elapsed = _call_ollama(prompt)
         _log(f"Ollama responded in {elapsed}s")
 
