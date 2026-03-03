@@ -1,138 +1,133 @@
-# 🏆 Offline AI OS --- AMD Ryzen Powered
+# 🏆 Offline AI OS — Improved README
 
-Privacy-First Local AI System \| 24-Hour Hackathon Build
+**Privacy-First Local AI System | AMD Ryzen Optimized**
 
-------------------------------------------------------------------------
+---
 
-## 🚀 Overview
+## 🚀 Quick overview
 
-Offline AI OS is a fully local, privacy-preserving AI operating system
-that runs entirely on your machine --- powered by AMD Ryzen CPUs and
-ONNX Runtime.
+Offline AI OS runs fully locally (no cloud) and is optimized for AMD Ryzen CPUs using ONNX Runtime. It provides a local LLM interface (Ollama), an ONNX-based embedding + memory layer, document indexing (RAG), and a small tool-using agent with file/PPT and Python execution capabilities.
 
-It combines:
+---
 
--   🧠 A local LLM (via Ollama)
--   💽 High-performance ONNX-based embedding + memory layer
--   📚 Document indexing & retrieval (RAG)
--   🛠️ Tool-using AI agent (file creation, PPT generation, Python
-    execution)
--   🎨 Web-based UI with real-time execution logs
+## 🏗️ System architecture (visual)
 
-All inference runs **offline**.\
-No cloud APIs. No external calls. Zero data leakage.
+```mermaid
+flowchart LR
+  Browser[Browser UI (app.html)] -->|HTTP/WebSocket| Backend[FastAPI Backend (server.py)]
+  Backend --> LLM[Local LLM (Ollama)]
+  Backend --> Tools[Tool Execution Layer]
+  Backend --> Memory[Memory Layer (ONNX + ChromaDB)]
+  Memory --> ONNX[ONNX Embedding Model (ONNX Runtime)]
+  Tools -->|file ops / exec| PythonRunner[python_runner.py]
+  Tools --> PPT[pptx_generator.py]
+  Tools --> FileTools[file_tools.py]
+  classDef infra fill:#f9f,stroke:#333,stroke-width:1px
+  class Backend,LLM,Tools,Memory,ONNX,PythonRunner,PPT,FileTools infra
+```
 
-------------------------------------------------------------------------
+---
 
-## 🏗️ System Architecture
+## 📁 Project structure (root-level)
 
-User (Browser UI) │ ▼ FastAPI Backend │ ├── Local LLM (Ollama) ├── Tool
-Execution Layer └── Memory Layer (ONNX + ChromaDB) │ ▼ AMD Ryzen CPU
-(ONNX Runtime - CPUExecutionProvider)
+```
+offline-ai-os/
+├── agent/
+│   ├── tools/
+│   │   ├── file_tools.py
+│   │   ├── folder_tools.py
+│   │   ├── pptx_generator.py
+│   │   └── python_runner.py
+│   ├── agent_controller.py
+│   ├── llm_config.py
+│   └── tool_manager.py
+├── memory/
+│   ├── models/
+│   ├── benchmark.py
+│   ├── chroma_store.py
+│   ├── document_ingester.py
+│   ├── memory_api.py
+│   ├── ollama_llm.py
+│   └── onnx_embedder.py
+├── demo/
+│   └── sample_docs/
+├── app.html
+├── requirements.txt
+├── server.py
+└── .gitignore
+```
 
-------------------------------------------------------------------------
+---
 
-## 🧠 Core Capabilities
+## ⚙️ Installation & setup (concise)
 
-### 1️⃣ Local AI Agent
+1. Clone:
 
--   Runs through Ollama
--   Supports models like Phi-3 and Llama 3
--   Executes Python safely
--   Creates and edits files
--   Generates PowerPoint presentations automatically
+```bash
+git clone <your-repo-url>
+cd offline-ai-os
+```
 
-### 2️⃣ ONNX Memory Layer (AMD Optimized)
+2. Install dependencies:
 
--   Embeddings exported using Optimum
--   Inference runs on ONNX Runtime
--   Embedding model: sentence-transformers/all-MiniLM-L6-v2
--   Vector storage via ChromaDB
--   Uses CPUExecutionProvider for optimized AMD Ryzen execution
-
-### 3️⃣ Retrieval-Augmented Generation (RAG)
-
--   Ingest PDFs and TXT documents
--   Chunk → Embed → Store
--   Query semantic memory locally
--   Pass retrieved context to LLM
--   Generate summaries and presentations
-
-### 4️⃣ Tool Execution System
-
-The AI agent can: - Create files - Read documents - Organize folders -
-Generate .pptx files using python-pptx - Execute Python scripts safely -
-Serve files for download
-
-------------------------------------------------------------------------
-
-## 📁 Project Structure
-
-offline-ai-os/ │ ├── README.md ├── requirements.txt ├── .env.example │
-├── agent/ ├── memory/ ├── routes/ ├── static/ ├── demo/ └── shared/
-
-------------------------------------------------------------------------
-
-## ⚙️ Installation
-
-### 1️⃣ Clone the Repository
-
-git clone `<your-repo-url>`{=html} cd offline-ai-os
-
-### 2️⃣ Install Dependencies
-
+```bash
 pip install -r requirements.txt
+```
 
-### 3️⃣ Install & Run Ollama
+3. Install & run Ollama (example):
 
-curl -fsSL https://ollama.com/install.sh \| sh ollama pull phi3 ollama
-serve
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull phi3
+ollama serve
+```
 
-### 4️⃣ Export ONNX Embedding Model
+4. Export ONNX embedding model (example):
 
-optimum-cli export onnx --model sentence-transformers/all-MiniLM-L6-v2
-memory/models/
+```bash
+optimum-cli export onnx --model sentence-transformers/all-MiniLM-L6-v2 memory/models/
+```
 
-### 5️⃣ Start Backend
+5. Start backend:
 
+```bash
 uvicorn main:app --reload
+# or
+python server.py
+```
 
-Open: http://localhost:8000
+Open the UI: `http://localhost:8000` (or where your `app.html` points)
 
-------------------------------------------------------------------------
+---
 
-## 🧪 Running the Benchmark
+## 🧪 Running the benchmark
 
+```bash
 python memory/benchmark.py
+```
 
-Example output:
+Expect example output such as: `Inference: 12.4ms on AMD Ryzen CPU`.
 
-Inference: 12.4ms on AMD Ryzen CPU
+---
 
-------------------------------------------------------------------------
+## 🎬 Demo flow (UI)
 
-## 🎬 Demo Flow
+1. Open UI at `localhost:8000`.
+2. Enter: "Summarize my research folder and create a presentation."
+3. Watch execution logs in real time.
+4. Confirm "N documents indexed" memory indicator.
+5. Download generated PPTX.
 
-1.  Open UI at localhost:8000
-2.  Type: "Summarize my research folder and create a presentation."
-3.  Show execution logs
-4.  Show memory indicator (e.g., "3 documents indexed")
-5.  Download generated PPT
-6.  Highlight that everything ran locally on AMD Ryzen using ONNX
-    Runtime.
-
-------------------------------------------------------------------------
+---
 
 ## 🔐 Why Offline AI?
 
--   ✅ Full privacy
--   ✅ No API costs
--   ✅ Works without internet
--   ✅ Secure document handling
+* Full privacy
+* No API costs
+* Works offline
+* Secure document handling
 
-Perfect for research labs, healthcare, defense, and rural deployments.
-
-------------------------------------------------------------------------
+---
 
 ## 📜 License
 
