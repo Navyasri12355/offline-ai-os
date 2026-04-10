@@ -1,16 +1,16 @@
-# 🏆 Offline AI OS
+# Offline AI OS
 
 **Privacy-First Local AI System | AMD Ryzen Optimized**
 
 ---
 
-## 🚀 Quick overview
+## Quick overview
 
 Offline AI OS runs fully locally (no cloud) and is optimized for AMD Ryzen CPUs using ONNX Runtime. It provides a local LLM interface (Ollama), an ONNX-based embedding + memory layer, document indexing (RAG), and a small tool-using agent with file/PPT and Python execution capabilities.
 
 ---
 
-## 📁 Project structure
+## Project structure
 
 ```
 offline-ai-os/
@@ -41,7 +41,7 @@ offline-ai-os/
 
 ---
 
-## ⚙️ Installation & setup
+## Installation & setup
 
 1. Clone:
 
@@ -82,7 +82,7 @@ Open the UI: `http://localhost:8000` (or where your `app.html` points)
 
 ---
 
-## 🧪 Running the benchmark
+## Running the benchmark
 
 ```bash
 python memory/benchmark.py
@@ -92,17 +92,7 @@ Expect example output such as: `Inference: 12.4ms on AMD Ryzen CPU`.
 
 ---
 
-## 🎬 Demo flow (UI)
-
-1. Open UI at `localhost:8000`.
-2. Enter: "Summarize my research folder and create a presentation."
-3. Watch execution logs in real time.
-4. Confirm "N documents indexed" memory indicator.
-5. Download generated PPTX.
-
----
-
-## 🔐 Why Offline AI?
+## Why Offline AI?
 
 * Full privacy
 * No API costs
@@ -111,6 +101,6 @@ Expect example output such as: `Inference: 12.4ms on AMD Ryzen CPU`.
 
 ---
 
-## 📜 License
+## License
 
 MIT License
